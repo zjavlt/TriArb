@@ -4,6 +4,7 @@
 #include "OrderExecutor.hpp"
 #include <vector>
 #include <cstring>
+#include <chrono>
 
 template <typename T, int SIZE>
 class StaticQueue {
@@ -61,7 +62,7 @@ public:
     // SPFA
     // update_edge_idx -> later optimize to update only edges connected to the most recently updated node
     // full scan for now
-    void DetectCycle(GraphManager& gm, const SymbolMap& sm) {
+    void DetectCycle(GraphManager& gm, const SymbolMap& sm, std::chrono::steady_clock::time_point recv_time) {
         Reset();
         for (int i = 0; i < MAX_NODES; ++i) {
             dist[i] = GraphManager::INF_WEIGHT;
@@ -87,6 +88,9 @@ public:
                     update_cnt[v]++;
 
                     if (update_cnt[v] > NUM_COINS) {
+                        auto detect_time = std::chrono::steady_clock::now();
+                        auto latency = std::chrono::duration_cast<std::chrono::microseconds>(detect_time - recv_time).count();
+                        std::cout << "[Perf] Cycle Detected! Internal Latency: " << latency << " us" << std::endl;
                         ProcessArbitrage(v, gm, sm);
                         return;
                     }

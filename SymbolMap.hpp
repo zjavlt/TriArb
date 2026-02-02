@@ -5,6 +5,7 @@
 #include <string_view>
 #include <unordered_map>
 #include <array>
+#include <iostream>
 
 constexpr int NUM_COINS = 12;
 constexpr std::array<std::string_view, NUM_COINS> COIN_LIST = {
@@ -19,14 +20,16 @@ struct EdgePair {
 
 class SymbolMap {
 public:
-    std::unordered_map<std::string_view, NodeID> symbol_to_node;
-    std::unordered_map<std::string_view, EdgeID> pair_to_edge;
-    std::unordered_map<std::string_view, EdgePair> binance_to_edges;
+    std::unordered_map<std::string, NodeID> symbol_to_node;
+    std::unordered_map<std::string, EdgeID> pair_to_edge;
+    std::unordered_map<std::string, EdgePair> binance_to_edges;
     void Init() {
+        std::cout << "[SymbolMap] Initializing sequence for " << NUM_COINS << "coins... " << std::endl;
 
         symbol_to_node.reserve(NUM_COINS);   
         pair_to_edge.reserve(NUM_COINS * (NUM_COINS - 1));
         binance_to_edges.reserve(NUM_COINS * (NUM_COINS - 1));
+
         for (int i = 0; i < NUM_COINS; i++) {
             symbol_to_node.emplace(std::string(COIN_LIST[i]), static_cast<NodeID>(i));
         }
@@ -45,35 +48,48 @@ public:
             }
         }
 
+        // 4. [핵심] Binance Symbol 매핑 (여기가 비어있으면 BTCUSDT도 못 찾음)
+        int mapped_count = 0;
         for (int i = 0; i < NUM_COINS; i++) {
             for (int j = 0; j < NUM_COINS; j++) {
-                if (i==j)continue;
+                if (i == j) continue;
+                
+                // i=BTC, j=USDT -> "BTCUSDT"
                 std::string symbol = std::string(COIN_LIST[i]) + std::string(COIN_LIST[j]);
+                
+                // 만약 pair_to_edge에 없으면 로직 에러
+                if (pair_to_edge.find(symbol) == pair_to_edge.end()) continue;
 
-                if (pair_to_edge.find(symbol) == pair_to_edge.end()) {
-                    std::cerr << "[Error] Missing logic for " << symbol << std::endl;
-                    continue;
-                }
-
-                EdgeID fwd = GetEdgeID(symbol);
+                EdgeID fwd = pair_to_edge[symbol];
+                
+                // 역방향 (USDT + BTC)
                 std::string rev_symbol = std::string(COIN_LIST[j]) + std::string(COIN_LIST[i]);
-                EdgeID bwd = GetEdgeID(std::string(COIN_LIST[j]) + std::string(COIN_LIST[i]));
+                if (pair_to_edge.find(rev_symbol) == pair_to_edge.end()) continue;
+                
+                EdgeID bwd = pair_to_edge[rev_symbol];
 
+                // 맵에 저장
                 binance_to_edges[symbol] = {fwd, bwd};
+                mapped_count++;
             }
         }
-    }
-
-    inline EdgeID GetEdgeID(const std::string_view& symbol) {
-        auto it = pair_to_edge.find(symbol);
-        if (it != pair_to_edge.end()) {
-            return it->second;
+        std::cout << "[SymbolMap] Successfully mapped " << mapped_count << " trading pairs." << std::endl;
+        
+        // [Self-Check] BTCUSDT가 잘 들어갔는지 확인
+        if (binance_to_edges.find("BTCUSDT") != binance_to_edges.end()) {
+            std::cout << "[Check] BTCUSDT is VALID." << std::endl;
+        } else {
+            std::cerr << "[Check] BTCUSDT is MISSING!" << std::endl;
         }
-        return -1; // 리스트에 없는 코인 쌍(예: TRXBTC)이 들어올 경우 무시
+        if (binance_to_edges.find("BTCUSD") != binance_to_edges.end()) {
+            std::cout << "[Check] BTCUSD is VALID." << std::endl;
+        } else {
+            std::cerr << "[Check] BTCUSD is MISSING! (Did you add 'USD' to COIN_LIST?)" << std::endl;
+        }
     }
 
-    inline EdgePair GetEdgePair(const std::string_view& symbol) const {
-        auto it = binance_to_edges.find(symbol); // string view로 바꿨으니까 그에 맞게 업데이트; 현재 string 기준임
+    inline EdgePair GetEdgePair(const std::string_view symbol) const {
+        auto it = binance_to_edges.find(std::string(symbol)); // string view로 바꿨으니까 그에 맞게 업데이트; 현재 string 기준임
         if (it != binance_to_edges.end()) return it -> second;
         return {-1, -1};
     }

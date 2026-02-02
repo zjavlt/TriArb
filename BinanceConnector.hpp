@@ -20,19 +20,19 @@ protected:
         // Binance.US에서 거래 가능한 유효 페어 리스트 (소문자)
         // USDT 기반은 대부분 있고, BTC 기반은 메이저만 있음. ETH/BNB 기반은 거의 없음.
         static const std::vector<std::string> WHITELIST = {
-            // USDT Pairs (Base)
-            "btcusdt", "btcusd"
-            // , "ethusdt", "bnbusdt", "xrpusdt", "solusdt", 
-            // "dogeusdt", "adausdt", "ltcusdt", "bchusdt", "linkusdt",
+            // --- USD Pairs (기축) ---
+            "btcusd", "ethusd", "bnbusd", "solusd", "adausd", 
+            "dogeusd", "ltcusd", "bchusd", "linkusd", // XRP는 소송 이슈로 없을 수 있음
             
-            // // BTC Pairs (Quote)
-            // "ethbtc", "bnbbtc", "solbtc", "adabtc", "ltcbtc", "bchbtc", "linkbtc",
-            // // XRP/BTC, DOGE/BTC는 Binance.US에 없을 수도 있음 (확인 필요). 일단 넣고 테스트.
-            // "dogebtc", 
+            // --- USDT Pairs (테더) ---
+            "btcusdt", "ethusdt", "bnbusdt", "solusdt", "adausdt", 
+            "dogeusdt", "ltcusdt", "bchusdt", "linkusdt",
             
-            // ETH Pairs
-            // Binance.US는 ETH 마켓이 작음. 있을 확률 낮음. 
-            // 일단 안전하게 이정도만 구독.
+            // --- BTC Pairs (사토시 마켓) ---
+            "ethbtc", "solbtc", "bnbbtc", "adabtc", "ltcbtc", "linkbtc", "dogebtc"
+            
+            // --- ETH Pairs (거의 없음) ---
+            // "linketh" 정도? (Binance.US는 ETH 마켓이 매우 작음)
         };
 
         std::stringstream ss;
@@ -53,8 +53,6 @@ protected:
     }
 
     void process_message(std::string_view data) override {
-        // 주의: 실전에서는 절대 하면 안 됨 (I/O 병목). 디버깅용.
-        std::cout << "[RAW] " << data << std::endl;
 
         // simdjson은 padding이 필요하므로 string_view를 padded_string으로 변환 (복사 비용 1회 발생)
         // 최적화하려면 수신 버퍼 자체를 padded로 관리해야 하지만, 지금은 이정도로 충분함.
@@ -62,17 +60,6 @@ protected:
 
         try {
             auto doc = parser_.iterate(json_data_);
-            
-            // 2. 구독 응답 메시지인지 확인 ("result" 필드가 있으면 응답임)
-            // {"result":null,"id":1}
-            simdjson::ondemand::value val;
-            if (doc["result"].get(val) == simdjson::SUCCESS) {
-                std::cout << "[Binance] Subscription Confirmed!" << std::endl;
-                return;
-            }
-            // 1. 이벤트 타입 체크 (bookTicker만 처리)
-            // 바이낸스 bookTicker 포맷: {"u":..., "s":"BTCUSDT", "b":"95000", "a":"95001", ...}
-            // 구독 응답({"result":null...})은 "u" 필드가 없으므로 예외 처리됨 -> catch로 이동
 
             std::string_view s_sv;
             if (doc["s"].get_string().get(s_sv) != simdjson::SUCCESS) return;
@@ -80,7 +67,6 @@ protected:
             EdgePair edges = symbol_map_.GetEdgePair(std::string(s_sv));
 
             if (edges.fwd == -1)  {
-                std::cout << "[Skip] Unknown Pair: " << s_sv << std::endl;
                 return;
             }
             std::string_view bid_str, ask_str;
@@ -100,14 +86,14 @@ protected:
             long ts = 0; // doc["T"].get_int64() ...
             
             // --- Queue Push ---
-
+            auto now = std::chrono::steady_clock::now();
             // Case A: Forward Edge (예: BTC -> USDT)
             
             if (bid_price > 0) {
                 TickerUpdate t;
                 t.edge_idx = edges.fwd;
                 t.price = bid_price; // 이 가격에 팜
-                t.timestamp = ts;
+                t.recv_time = now;
                 queue_->enqueue(t);
             }
 
@@ -115,7 +101,7 @@ protected:
                 TickerUpdate t;
                 t.edge_idx = edges.bwd;
                 t.price = 1.0 / ask_price;
-                t.timestamp = ts;
+                t.recv_time = now;
 
                 queue_->enqueue(t);
             }

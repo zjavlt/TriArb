@@ -56,6 +56,22 @@ int main() {
 
         connector->run("stream.binance.us", "9443", "/ws");
 
+        std::thread injector([&gm, &sm, ring_buffer](){
+            std::this_thread::sleep_for(std::chrono::seconds(5));
+            std::cout << "\n>>> [Test] Injecting FAKE for Latency Check! <<<\n" << std::endl;
+            
+            EdgePair edges = sm.GetEdgePair("DOGEUSDT");
+            if (edges.fwd != -1) {
+                TickerUpdate fake;
+                fake.edge_idx = edges.fwd;
+                fake.price = 100.0;
+                // 여기서 시간을 찍어서 보냄
+                fake.recv_time = std::chrono::steady_clock::now(); 
+                ring_buffer->enqueue(fake);
+            }
+        });
+        injector.detach();
+
         std::thread net_thread(NetworkThread, ioc);
 
         std::cout << ">>> Engine Started. Waiting for Market Data..." << std::endl;
@@ -74,12 +90,12 @@ int main() {
                 }
 
                 gm.UpdateWeight(update.edge_idx, update.price);
-                engine.DetectCycle(gm, sm);
+                engine.DetectCycle(gm, sm, update.recv_time);
 
                 processed_count++;
                 
                 // 10만 건은 너무 멂. 1,000건마다 점(.)을 찍어서 생존 신고
-                if (processed_count % 1000 == 0) {
+                if (processed_count % 10000 == 0) {
                      std::cout << "." << std::flush;
                 }
             } else {
