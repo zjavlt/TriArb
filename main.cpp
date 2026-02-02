@@ -1,67 +1,114 @@
+// 02-01: Finished SPFA and RingBuffer, need optimization on digraph edges -> then start parsing
+
+#include "Common.hpp"
 #include "SymbolMap.hpp"
 #include "GraphManager.hpp"
 #include "ArbitrageEngine.hpp"
+#include "RingBuffer.hpp"
+#include "BinanceConnector.hpp"
+
 #include <iostream>
+#include <thread>
+#include <memory>
+#include <atomic>
+#include <chrono>
+#include <boost/asio.hpp>
+#include <csignal>
+#include <immintrin.h> //need clarification later CPU level commands
 
-// 02-01: Finished SPFA and RingBuffer, need optimization on digraph edges -> then start parsing
+namespace net = boost::asio;
 
+// [Global] 프로그램 실행 상태 플래그
+// 시그널 핸들러에서 접근해야 하므로 전역(혹은 정적)이어야 함
+std::atomic<bool> g_running{true};
+
+// [Handler] Ctrl+C가 눌리면 호출됨
+void signal_handler(int signum) {
+    g_running = false;
+}
+
+void NetworkThread(std::shared_ptr<net::io_context> ioc) {
+    std::cout << "[Network] Thread Started. Connecting to Binance..." << std::endl;
+    auto work = net::make_work_guard(*ioc);
+    ioc->run();
+    std::cout << "[Network] Stopped." << std::endl;
+}
 int main() {
-    // 1. 초기화
-    SymbolMap sm;
-    sm.Init();
+    try {
+        std::signal(SIGINT, signal_handler);
+        // 1. 초기화
+        SymbolMap sm;
+        sm.Init();
 
-    GraphManager gm;
-    gm.Init();
+        GraphManager gm;
+        gm.Init();
 
-    ArbitrageEngine engine;
+        ArbitrageEngine engine;
 
-    std::cout << "[System] Engine Initialized. Injecting Mock Data..." << std::endl;
+        auto ring_buffer = std::make_shared<RingBuffer<TickerUpdate>>(4096);
 
-    // 2. 정상적인 시장 상황 (차익 기회 없음)
-    // A -> B -> C -> A 곱해서 1.0 근처가 되도록 설정
-    // USDT -> BTC ($95000)
-    // BTC -> ETH (33.33 ETH/BTC ... 가정)
-    // ETH -> USDT ($2850)
-    // 95000 * (1/2850) * (1/33.33) ~= 1.0
-    
-    int e1 = sm.GetEdgeID("BTCUSDT"); // USDT -> BTC (매수: 1/Price) 주의! 
-    // 아비트라지 방향성을 명확히 해야 함. 일단 단순하게 Price로 넣고 엔진 테스트.
-    // 여기서는 그래프의 가중치 방향이 중요함.
-    // GraphManager는 -log(price)를 저장함.
-    
-    // 시나리오: USDT ->(사고)-> BTC ->(사고)-> ETH ->(팔고)-> USDT
-    // 1. USDT로 BTC 매수: Price = 1/95000 (역수)
-    // 2. BTC로 ETH 매수: Price = 1/0.03 (역수)
-    // 3. ETH를 USDT로 매도: Price = 3000
-    // Profit = (1/95000) * (1/0.03) * 3000 
-    //        = 3000 / 2850 = 1.05 (5% 이득!)
+        std::shared_ptr<net::io_context> ioc = std::make_shared<net::io_context>();
 
-    // Edge ID 조회 (SymbolMap.hpp의 로직에 따라 문자열 결합)
-    // 주의: SymbolMap은 "From"+"To"로 저장함.
-    // USDT->BTC 엣지는 "USDTBTC" 임. 하지만 바이낸스 심볼은 "BTCUSDT"
-    // HFT에서는 보통 "BTCUSDT" 가격을 받으면 "USDT->BTC" 와 "BTC->USDT" 두 엣지를 갱신함.
-    // 하나는 Price, 하나는 1/Price 로.
-    // 일단 테스트를 위해 직접 ID를 가져와서 조작.
-    
-    NodeID usdt = sm.symbol_to_node["USDT"];
-    NodeID btc = sm.symbol_to_node["BTC"];
-    NodeID eth = sm.symbol_to_node["ETH"];
+        ssl::context ctx{ssl::context::tlsv12_client};
+        ctx.set_verify_mode(ssl::verify_none);
 
-    EdgeID usdt_btc = sm.GetEdgeID("USDTBTC"); // USDT -> BTC
-    EdgeID btc_eth  = sm.GetEdgeID("BTCETH");  // BTC -> ETH
-    EdgeID eth_usdt = sm.GetEdgeID("ETHUSDT"); // ETH -> USDT
+        auto connector = std::make_shared<BinanceConnector>(*ioc, ctx, ring_buffer, sm);
 
-    // 3. Arbitrage 기회 주입 (5% 이득 시나리오)
-    // 수수료 고려해서 넉넉하게 잡음
-    gm.UpdateWeight(usdt_btc, 1.0 / 10000.0); // 1 BTC = 10,000 USDT
-    gm.UpdateWeight(btc_eth,  1.0 / 0.05);    // 1 ETH = 0.05 BTC (20 ETH/BTC)
-    gm.UpdateWeight(eth_usdt, 600.0);         // 1 ETH = 600 USDT
-    
-    // 계산: 10,000으로 나눠서 BTC 사고(0.0001), 20배 해서 ETH 되고(0.002), 600 곱하면(1.2)
-    // 1.0 -> 1.2 (20% 수익)
+        connector->run("stream.binance.us", "9443", "/ws");
 
-    // 4. 엔진 실행
-    engine.DetectCycle(gm, sm);
+        std::thread net_thread(NetworkThread, ioc);
+
+        std::cout << ">>> Engine Started. Waiting for Market Data..." << std::endl;
+
+        TickerUpdate update;
+        long processed_count = 0;
+        auto start_time = std::chrono::steady_clock::now();
+
+        while (g_running) {
+            if (ring_buffer->dequeue(update)) {
+                
+                // [디버깅] 초반 5개 데이터는 무조건 출력 (데이터 들어오는지 확인용)
+                if (processed_count < 5) {
+                    std::cout << "[Debug] Data received! Edge: " << update.edge_idx 
+                              << " Price: " << update.price << std::endl;
+                }
+
+                gm.UpdateWeight(update.edge_idx, update.price);
+                engine.DetectCycle(gm, sm);
+
+                processed_count++;
+                
+                // 10만 건은 너무 멂. 1,000건마다 점(.)을 찍어서 생존 신고
+                if (processed_count % 1000 == 0) {
+                     std::cout << "." << std::flush;
+                }
+            } else {
+                _mm_pause(); 
+            }
+        }
+
+        // -------------------------------------------------------
+        // [Exit Stats] 종료 시 통계 출력
+        // -------------------------------------------------------
+        auto end_time = std::chrono::steady_clock::now();
+        std::chrono::duration<double> diff = end_time - start_time;
+        double seconds = diff.count();
+
+        std::cout << "\n\n>>> Shutdown Signal Received." << std::endl;
+        std::cout << "==========================================" << std::endl;
+        std::cout << " Total Updates Processed : " << processed_count << std::endl;
+        std::cout << " Running Time            : " << seconds << " sec" << std::endl;
+        std::cout << " Throughput              : " << (processed_count / seconds) << " ops/sec" << std::endl;
+        std::cout << "==========================================" << std::endl;
+
+        // Cleanup
+        ioc->stop();
+        net_thread.join();
+
+    } catch (std::exception& e) {
+        std::cerr << "[Critical Error] " << e.what() << std::endl;
+        return 1;
+    }
 
     return 0;
 }

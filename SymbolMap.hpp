@@ -6,8 +6,9 @@
 #include <unordered_map>
 #include <array>
 
+constexpr int NUM_COINS = 12;
 constexpr std::array<std::string_view, NUM_COINS> COIN_LIST = {
-    "USDT", "BTC", "ETH", "BNB", "XRP", "SOL", 
+    "USDT", "USD", "BTC", "ETH", "BNB", "XRP", "SOL", 
     "DOGE", "ADA", "LTC", "BCH", "LINK"
 };
 
@@ -49,7 +50,13 @@ public:
                 if (i==j)continue;
                 std::string symbol = std::string(COIN_LIST[i]) + std::string(COIN_LIST[j]);
 
+                if (pair_to_edge.find(symbol) == pair_to_edge.end()) {
+                    std::cerr << "[Error] Missing logic for " << symbol << std::endl;
+                    continue;
+                }
+
                 EdgeID fwd = GetEdgeID(symbol);
+                std::string rev_symbol = std::string(COIN_LIST[j]) + std::string(COIN_LIST[i]);
                 EdgeID bwd = GetEdgeID(std::string(COIN_LIST[j]) + std::string(COIN_LIST[i]));
 
                 binance_to_edges[symbol] = {fwd, bwd};

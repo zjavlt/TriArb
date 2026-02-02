@@ -9,6 +9,8 @@ class GraphManager {
 public:
     std::vector<Edge> adj[MAX_NODES];
 
+    static constexpr int64_t INF_WEIGHT = 1000000000000000;
+
     std::vector<int64_t> edge_weights;
 
     const double FEE_MULTIPLIER = 1.0 - 0.00075;
@@ -17,7 +19,7 @@ public:
 
     void Init() {
         int max_possible_edges = NUM_COINS * (NUM_COINS - 1);
-        edge_weights.resize(max_possible_edges, 0);
+        edge_weights.resize(max_possible_edges, INF_WEIGHT);
 
         int edge_cnt = 0;
 

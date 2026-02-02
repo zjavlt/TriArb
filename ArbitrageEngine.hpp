@@ -54,7 +54,7 @@ public:
         std::memset(update_cnt, 0, sizeof(update_cnt));
         std::memset(in_queue, 0, sizeof(in_queue));
 
-        std::memset(dist, 0, sizeof(dist));
+        // std::memset(dist, GraphManager::INF_WEIGHT, sizeof(dist));
         q.clear();
     }
 
@@ -63,7 +63,9 @@ public:
     // full scan for now
     void DetectCycle(GraphManager& gm, const SymbolMap& sm) {
         Reset();
-
+        for (int i = 0; i < MAX_NODES; ++i) {
+            dist[i] = GraphManager::INF_WEIGHT;
+        }
         for (int i = 0; i < NUM_COINS; i++) {
             q.push(i);
             in_queue[i] = true;
@@ -76,6 +78,8 @@ public:
             for (const auto& edge : gm.adj[u]) {
                 NodeID v = edge.to;
                 int64_t weight = gm.edge_weights[edge.weight_idx];
+
+                if (weight >= GraphManager::INF_WEIGHT) continue;
 
                 if (dist[u] + weight < dist[v]) {
                     dist[v] = dist[u] + weight;
