@@ -18,9 +18,9 @@ struct EdgePair {
 
 class SymbolMap {
 public:
-    std::unordered_map<std::string, NodeID> symbol_to_node;
-    std::unordered_map<std::string, EdgeID> pair_to_edge;
-    std::unordered_map<std::string, EdgePair> binance_to_edges;
+    std::unordered_map<std::string_view, NodeID> symbol_to_node;
+    std::unordered_map<std::string_view, EdgeID> pair_to_edge;
+    std::unordered_map<std::string_view, EdgePair> binance_to_edges;
     void Init() {
 
         symbol_to_node.reserve(NUM_COINS);   
@@ -57,7 +57,7 @@ public:
         }
     }
 
-    inline EdgeID GetEdgeID(const std::string& symbol) {
+    inline EdgeID GetEdgeID(const std::string_view& symbol) {
         auto it = pair_to_edge.find(symbol);
         if (it != pair_to_edge.end()) {
             return it->second;
