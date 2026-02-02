@@ -3,6 +3,8 @@
 #include "ArbitrageEngine.hpp"
 #include <iostream>
 
+// 02-01: Finished SPFA and RingBuffer, need optimization on digraph edges -> then start parsing
+
 int main() {
     // 1. 초기화
     SymbolMap sm;
