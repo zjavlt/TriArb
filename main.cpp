@@ -1,4 +1,5 @@
-// 02-01: Finished SPFA and RingBuffer, need optimization on digraph edges -> then start parsing
+// 02-03: Got it to work with locality and core focus and FIFO scheduler. Now going to expand coin graph with python scraping. 
+// Current average delay : 40 microseconds
 
 #include "Common.hpp"
 #include "SymbolMap.hpp"
@@ -14,7 +15,11 @@
 #include <chrono>
 #include <boost/asio.hpp>
 #include <csignal>
-#include <immintrin.h> //need clarification later CPU level commands
+
+#include <immintrin.h>
+#include <sched.h>
+#include <pthread.h>
+#include <unistd.h>
 
 namespace net = boost::asio;
 
@@ -27,15 +32,47 @@ void signal_handler(int signum) {
     g_running = false;
 }
 
+void PinThreadToCore(int core_id, const std::string& thread_name) {
+    cpu_set_t cpuset;
+    CPU_ZERO(&cpuset);
+    CPU_SET(core_id, &cpuset);
+
+    pthread_t current_thread = pthread_self();
+    int rc = pthread_setaffinity_np(current_thread, sizeof(cpu_set_t), &cpuset);
+
+    if (rc != 0) {
+        std::cerr << "[Warning] Failed to pin " << thread_name << " to Core " << core_id << std::endl;
+    } else {
+        std::cout << "[System] " << thread_name << " is PINNED to Core " << core_id << std::endl;
+    }
+}
+
+void SetRealtimePriority() {
+    struct sched_param param;
+    
+    param.sched_priority = 90;
+
+    if (sched_setscheduler(0, SCHED_FIFO, &param) == -1) {
+        std::cerr << "Somehow failed scheduler set idk. " << std::endl;
+    } else {
+        std::cerr << "yippee" << std::endl;
+    }
+}
+
 void NetworkThread(std::shared_ptr<net::io_context> ioc) {
+    PinThreadToCore(2, "Network Thread");
+
     std::cout << "[Network] Thread Started. Connecting to Binance..." << std::endl;
     auto work = net::make_work_guard(*ioc);
     ioc->run();
     std::cout << "[Network] Stopped." << std::endl;
 }
 int main() {
+    std::signal(SIGINT, signal_handler);
     try {
-        std::signal(SIGINT, signal_handler);
+        std::cout << "Initializing..." << "\n";
+        PinThreadToCore(4, "Engine(Main)");
+        SetRealtimePriority();
         // 1. 초기화
         SymbolMap sm;
         sm.Init();
@@ -56,25 +93,31 @@ int main() {
 
         connector->run("stream.binance.us", "9443", "/ws");
 
-        std::thread injector([&gm, &sm, ring_buffer](){
-            std::this_thread::sleep_for(std::chrono::seconds(5));
-            std::cout << "\n>>> [Test] Injecting FAKE for Latency Check! <<<\n" << std::endl;
+        // std::thread injector([&gm, &sm, ring_buffer](){
+        //     PinThreadToCore(6, "Injector"); // diff core
+        //     std::this_thread::sleep_for(std::chrono::seconds(5));
+        //     std::cout << "\n>>> [Test] Injecting FAKE for Latency Check! <<<\n" << std::endl;
             
-            EdgePair edges = sm.GetEdgePair("DOGEUSDT");
-            if (edges.fwd != -1) {
-                TickerUpdate fake;
-                fake.edge_idx = edges.fwd;
-                fake.price = 100.0;
-                // 여기서 시간을 찍어서 보냄
-                fake.recv_time = std::chrono::steady_clock::now(); 
-                ring_buffer->enqueue(fake);
-            }
-        });
-        injector.detach();
+        //     EdgePair edges = sm.GetEdgePair("DOGEUSDT");
+        //     if (edges.fwd != -1) {
+        //         TickerUpdate fake;
+        //         fake.edge_idx = edges.fwd;
+        //         fake.price = 100.0;
+        //         // 여기서 시간을 찍어서 보냄
+        //         fake.recv_time = std::chrono::steady_clock::now(); 
+        //         ring_buffer->enqueue(fake);
+        //     }
+        // });
+        // injector.detach();
 
         std::thread net_thread(NetworkThread, ioc);
 
         std::cout << ">>> Engine Started. Waiting for Market Data..." << std::endl;
+
+        std::this_thread::sleep_for(std::chrono::seconds(1));
+
+        std::cout << ">>> Elevating Priority to SCHED_FIFO..." << std::endl;
+        SetRealtimePriority();
 
         TickerUpdate update;
         long processed_count = 0;
@@ -116,6 +159,7 @@ int main() {
         std::cout << " Running Time            : " << seconds << " sec" << std::endl;
         std::cout << " Throughput              : " << (processed_count / seconds) << " ops/sec" << std::endl;
         std::cout << "==========================================" << std::endl;
+        engine.PrintMinMaxLatency();
 
         // Cleanup
         ioc->stop();

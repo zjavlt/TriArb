@@ -4,34 +4,33 @@
 #include <vector>
 #include <cmath>
 #include <iostream>
+#include <cstring>
 
 class GraphManager {
 public:
-    std::vector<Edge> adj[MAX_NODES];
-
-    static constexpr int64_t INF_WEIGHT = 1000000000000000;
-
-    std::vector<int64_t> edge_weights;
+    int64_t edge_weights[MAX_EDGES];
+    struct SimpleEdge {
+        NodeID to;
+        EdgeID weight_idx;
+    };
+    SimpleEdge adj[MAX_NODES][MAX_NODES]; 
+    int adj_size[MAX_NODES];
 
     const double FEE_MULTIPLIER = 1.0 - 0.00075;
-
+    static constexpr int64_t INF_WEIGHT = 1000000000000000;
+    static constexpr int64_t LOG_FEE_SCALED = 0; //-999500; for testing//0 for no fee; //750281; // -log(1 - 0.00075) * 1e9
     static constexpr int64_t SCALING_FACTOR = 1000000000;
 
     void Init() {
-        int max_possible_edges = NUM_COINS * (NUM_COINS - 1);
-        edge_weights.resize(max_possible_edges, INF_WEIGHT);
+        std::fill(std::begin(edge_weights), std::end(edge_weights), INF_WEIGHT);
+        std::memset(adj_size, 0, sizeof(adj_size));
 
         int edge_cnt = 0;
-
         for (int u = 0; u < NUM_COINS; u++) {
             for (int v = 0; v < NUM_COINS; v++) {
                 if (u == v) continue;
-
-                Edge e;
-                e.to = v;
-                e.weight_idx = edge_cnt;
-                
-                adj[u].push_back(e);
+                int idx = adj_size[u]++;
+                adj[u][idx] = {(NodeID)v, edge_cnt};
                 edge_cnt++;
             }
         }
@@ -39,16 +38,15 @@ public:
     }
 
     inline void UpdateWeight(EdgeID id, double price) {
-        if (id < 0 || id >= (int)edge_weights.size()) return;
-
-        if (price > 1e-9) {
-            double log_val = -std::log(price * FEE_MULTIPLIER);
-            edge_weights[id] = static_cast<int64_t>(log_val * SCALING_FACTOR);
+        if (__builtin_expect(price > 1e-9, 1)) {
+            double log_p = -std::log(price);
+            edge_weights[id] = static_cast<int64_t>(log_p * SCALING_FACTOR) + LOG_FEE_SCALED;
         }
     }
 
     double GetOriginalPrice(EdgeID id) {
-        double log_val = (double)edge_weights[id] / SCALING_FACTOR;
-        return std::exp(-log_val) / FEE_MULTIPLIER;
+        int64_t val = edge_weights[id] - LOG_FEE_SCALED;
+        double log_p = (double)val / SCALING_FACTOR; // = -log(price)
+        return std::exp(-log_p);
     }
 };

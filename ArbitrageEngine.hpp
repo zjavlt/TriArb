@@ -21,7 +21,7 @@ public:
 
     void push(T val) {
         buffer[tail] = val;
-        tail = (tail + 1) & MASK; // bit manipulation later?
+        tail = (tail + 1) & MASK;
         count++;
     }
 
@@ -41,9 +41,10 @@ private:
     NodeID parent[MAX_NODES];
     int update_cnt[MAX_NODES]; // cycle detection counter
     bool in_queue[MAX_NODES];
-
     StaticQueue<NodeID, MAX_NODES * 4> q; // 4 for bitmask
-
+    long max_latency = 0;
+    long min_latency = 9999;
+    long total_detection = 0;
     OrderExecutor executor;
 
 public:
@@ -59,6 +60,11 @@ public:
         q.clear();
     }
 
+    void PrintMinMaxLatency() {
+        std::cout << "[Maximum Latency] " << max_latency << "ms\n[Minimum Latency]" << min_latency 
+        << "ms\n[Total Detections] " << total_detection << std::endl;
+    }
+
     // SPFA
     // update_edge_idx -> later optimize to update only edges connected to the most recently updated node
     // full scan for now
@@ -70,13 +76,26 @@ public:
         for (int i = 0; i < NUM_COINS; i++) {
             q.push(i);
             in_queue[i] = true;
+            dist[i] = 0;
         }
+        long loop_count = 0;
+        long relax_count = 0;
 
         while (!q.empty()) {
             NodeID u = q.pop();
             in_queue[u] = false;
+            loop_count++; // [Debug] 루프 횟수 체크
 
-            for (const auto& edge : gm.adj[u]) {
+            // 여기서 gm.adj_size[u]가 0이면 그래프 연결이 안 된 것임
+            int count = gm.adj_size[u];
+            if (count == 0 && loop_count < 20) {
+                 // [Debug] 연결된 간선이 없음 (초반에만 출력)
+                 std::cout << "[Debug] Node " << u << " has 0 edges!" << std::endl; 
+            }
+
+            for (int i = 0; i < count; ++i){
+                const auto& edge = gm.adj[u][i];
+
                 NodeID v = edge.to;
                 int64_t weight = gm.edge_weights[edge.weight_idx];
 
@@ -86,11 +105,17 @@ public:
                     dist[v] = dist[u] + weight;
                     parent[v] = u;
                     update_cnt[v]++;
+                    relax_count++;
+
+                    // if (relax_count < 10) std::cout << "[Debug] Relax: " << u << "->" << v << " W:" << weight << std::endl;
 
                     if (update_cnt[v] > NUM_COINS) {
                         auto detect_time = std::chrono::steady_clock::now();
                         auto latency = std::chrono::duration_cast<std::chrono::microseconds>(detect_time - recv_time).count();
-                        std::cout << "[Perf] Cycle Detected! Internal Latency: " << latency << " us" << std::endl;
+                        if (latency > max_latency) max_latency = latency;
+                        if (latency < min_latency) min_latency = latency;
+                        total_detection++;
+                        // std::cout << "[Perf] Cycle Detected! Internal Latency: " << latency << " us" << std::endl;
                         ProcessArbitrage(v, gm, sm);
                         return;
                     }
@@ -102,6 +127,7 @@ public:
                 }
             }
         }
+        // std::cout << "[Debug] SPFA Finished. Loops: " << loop_count << ", Relaxations: " << relax_count << std::endl;
     }
 
 private:

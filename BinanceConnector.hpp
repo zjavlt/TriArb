@@ -53,6 +53,7 @@ protected:
     }
 
     void process_message(std::string_view data) override {
+        // std::cout << data << std::endl;
 
         // simdjson은 padding이 필요하므로 string_view를 padded_string으로 변환 (복사 비용 1회 발생)
         // 최적화하려면 수신 버퍼 자체를 padded로 관리해야 하지만, 지금은 이정도로 충분함.

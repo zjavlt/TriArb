@@ -3,3 +3,10 @@ main
 instruction.txt
 
 CMakeLists.txt
+
+build
+
+.gitignore
+
+test_spfa.cpp
+
