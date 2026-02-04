@@ -39,7 +39,7 @@ public:
 
         double actual_return_pct = (std::exp(-total_log_return) - 1.0) * 100.0;
 
-        std::cout << ">>> Expected Profit: " << std::fixed << std::setprecision(4)
+        std::cout << ">>> Expected Profit: " << std::fixed << std::setprecision(9)
                   << actual_return_pct << "% (Net)" << std::endl;
     }
 };

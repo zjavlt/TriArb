@@ -18,7 +18,8 @@ public:
 
     const double FEE_MULTIPLIER = 1.0 - 0.00075;
     static constexpr int64_t INF_WEIGHT = 1000000000000000;
-    static constexpr int64_t LOG_FEE_SCALED = 0; //-999500; for testing//0 for no fee; //750281; // -log(1 - 0.00075) * 1e9
+    static constexpr int64_t LOG_FEE_SCALED = 82503; 
+    //-999500; for testing//0 for no fee; //750281 -> -log(1 - 0.00075) * 1e9 //82503 -> -log(1 - 0.0000825) 
     static constexpr int64_t SCALING_FACTOR = 1000000000;
 
     void Init() {
@@ -26,8 +27,8 @@ public:
         std::memset(adj_size, 0, sizeof(adj_size));
 
         int edge_cnt = 0;
-        for (int u = 0; u < NUM_COINS; u++) {
-            for (int v = 0; v < NUM_COINS; v++) {
+        for (int u = 0; u < Config::NUM_COINS; u++) {
+            for (int v = 0; v < Config::NUM_COINS; v++) {
                 if (u == v) continue;
                 int idx = adj_size[u]++;
                 adj[u][idx] = {(NodeID)v, edge_cnt};

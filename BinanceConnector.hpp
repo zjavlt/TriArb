@@ -5,6 +5,7 @@
 #include "SymbolMap.hpp"
 #include <sstream>
 #include <cctype>
+#include "Config.hpp"
 
 class BinanceConnector : public MarketDataConnector {
 private:
@@ -17,30 +18,13 @@ public:
 
 protected:
     void on_session_started() override {
-        // Binance.US에서 거래 가능한 유효 페어 리스트 (소문자)
-        // USDT 기반은 대부분 있고, BTC 기반은 메이저만 있음. ETH/BNB 기반은 거의 없음.
-        static const std::vector<std::string> WHITELIST = {
-            // --- USD Pairs (기축) ---
-            "btcusd", "ethusd", "bnbusd", "solusd", "adausd", 
-            "dogeusd", "ltcusd", "bchusd", "linkusd", // XRP는 소송 이슈로 없을 수 있음
-            
-            // --- USDT Pairs (테더) ---
-            "btcusdt", "ethusdt", "bnbusdt", "solusdt", "adausdt", 
-            "dogeusdt", "ltcusdt", "bchusdt", "linkusdt",
-            
-            // --- BTC Pairs (사토시 마켓) ---
-            "ethbtc", "solbtc", "bnbbtc", "adabtc", "ltcbtc", "linkbtc", "dogebtc"
-            
-            // --- ETH Pairs (거의 없음) ---
-            // "linketh" 정도? (Binance.US는 ETH 마켓이 매우 작음)
-        };
 
         std::stringstream ss;
         ss << R"({"method": "SUBSCRIBE", "params": [)";
         
-        for (size_t i = 0; i < WHITELIST.size(); ++i) {
+        for (size_t i = 0; i < Config::TARGET_PAIRS.size(); ++i) {
             if (i > 0) ss << ",";
-            ss << "\"" << WHITELIST[i] << "@bookTicker\"";
+            ss << "\"" << Config::TARGET_PAIRS[i] << "@bookTicker\"";
         }
         
         ss << R"(], "id": 1})";
@@ -48,7 +32,7 @@ protected:
         ws_.async_write(net::buffer(ss.str()), 
             [this](beast::error_code ec, std::size_t bytes_transferred) {
                 if (ec) std::cerr << "Subscribe Failed: " << ec.message() << std::endl;
-                else std::cout << "[Binance] Subscribed to " << WHITELIST.size() << " valid pairs." << std::endl;
+                else std::cout << "[Binance] Subscribed to " << Config::NUM_PAIRS << " valid pairs." << std::endl;
             });
     }
 

@@ -28,7 +28,21 @@ private:
     alignas(CACHE_LINE_SIZE) std::atomic<size_t> tail_; // producer location
     alignas(CACHE_LINE_SIZE) std::atomic<size_t> head_; // consumer location
 
-public:
+public: 
+    size_t size() const {
+        size_t h = head_.load(std::memory_order_relaxed);
+        size_t t = tail_.load(std::memory_order_relaxed);
+
+        if (h >= t) {
+            return h - t;
+        } else {
+            return (buffer_mask_+1) + h - t;
+        }
+    }
+
+    double load_factor() const {
+        return (double)size() / (buffer_mask_+1) * 100.0;
+    }
     //size must be 2**n
     RingBuffer(size_t size) 
         : buffer_mask_(size - 1), buffer_(new Element[size]), tail_(0), head_(0)

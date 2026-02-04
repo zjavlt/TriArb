@@ -5,6 +5,7 @@
 #include <vector>
 #include <cstring>
 #include <chrono>
+constexpr int64_t MIN_IMPROVEMENT = 100000; //ln(1.0001) * 1e9 = 99995
 
 template <typename T, int SIZE>
 class StaticQueue {
@@ -41,13 +42,16 @@ private:
     NodeID parent[MAX_NODES];
     int update_cnt[MAX_NODES]; // cycle detection counter
     bool in_queue[MAX_NODES];
-    StaticQueue<NodeID, MAX_NODES * 4> q; // 4 for bitmask
-    long max_latency = 0;
-    long min_latency = 9999;
+    StaticQueue<NodeID, MAX_NODES * 16> q; // 2^n for bitmask
     long total_detection = 0;
     OrderExecutor executor;
+    std::chrono::steady_clock::time_point last_detection_time;
+    NodeID last_detected_node = -1;
 
 public:
+    long max_latency = 0;
+    long min_latency = 9999;
+    
     ArbitrageEngine() {
         Reset();
     }
@@ -60,9 +64,13 @@ public:
         q.clear();
     }
 
+    long GetTotalDetection() {
+        return total_detection;
+    }
+
     void PrintMinMaxLatency() {
-        std::cout << "[Maximum Latency] " << max_latency << "ms\n[Minimum Latency]" << min_latency 
-        << "ms\n[Total Detections] " << total_detection << std::endl;
+        std::cout << "[Maximum Latency] " << max_latency << "us\n[Minimum Latency] " << min_latency 
+        << "us\n[Total Detections] " << total_detection << std::endl;
     }
 
     // SPFA
@@ -73,7 +81,7 @@ public:
         for (int i = 0; i < MAX_NODES; ++i) {
             dist[i] = GraphManager::INF_WEIGHT;
         }
-        for (int i = 0; i < NUM_COINS; i++) {
+        for (int i = 0; i < Config::NUM_COINS; i++) {
             q.push(i);
             in_queue[i] = true;
             dist[i] = 0;
@@ -101,7 +109,7 @@ public:
 
                 if (weight >= GraphManager::INF_WEIGHT) continue;
 
-                if (dist[u] + weight < dist[v]) {
+                if (dist[u] + weight + MIN_IMPROVEMENT < dist[v]) {
                     dist[v] = dist[u] + weight;
                     parent[v] = u;
                     update_cnt[v]++;
@@ -109,14 +117,20 @@ public:
 
                     // if (relax_count < 10) std::cout << "[Debug] Relax: " << u << "->" << v << " W:" << weight << std::endl;
 
-                    if (update_cnt[v] > NUM_COINS) {
-                        auto detect_time = std::chrono::steady_clock::now();
-                        auto latency = std::chrono::duration_cast<std::chrono::microseconds>(detect_time - recv_time).count();
+                    if (update_cnt[v] > Config::NUM_COINS) {
+                        auto now = std::chrono::steady_clock::now();
+                        auto latency = std::chrono::duration_cast<std::chrono::microseconds>(now - recv_time).count();
                         if (latency > max_latency) max_latency = latency;
                         if (latency < min_latency) min_latency = latency;
                         total_detection++;
-                        // std::cout << "[Perf] Cycle Detected! Internal Latency: " << latency << " us" << std::endl;
-                        ProcessArbitrage(v, gm, sm);
+
+                        // auto time_diff = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_detection_time).count();
+                        // // std::cout << "[Perf] Cycle Detected! Internal Latency: " << latency << " us" << std::endl;
+                        // // if (v != last_detected_node || time_diff > 100) {
+                        // //     // ProcessArbitrage(v, gm, sm);
+                        // //     last_detection_time = now;
+                        // //     last_detected_node = v;
+                        // // }
                         return;
                     }
 
@@ -133,7 +147,7 @@ public:
 private:
     void ProcessArbitrage(NodeID detected_node, GraphManager& gm, const SymbolMap& sm) {
         NodeID curr = detected_node;
-        for (int i = 0 ; i < NUM_COINS; i++) {
+        for (int i = 0 ; i < Config::NUM_COINS; i++) {
             curr = parent[curr];
         }
 
@@ -146,7 +160,7 @@ private:
             curr = parent[curr];
             
             // 안전장치: 무한루프 방지
-            if (cycle.size() > NUM_COINS * 2) return;
+            if (cycle.size() > Config::NUM_COINS * 2) return;
         }
 
         //backtracked so backward

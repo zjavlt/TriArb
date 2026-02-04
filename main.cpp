@@ -82,7 +82,7 @@ int main() {
 
         ArbitrageEngine engine;
 
-        auto ring_buffer = std::make_shared<RingBuffer<TickerUpdate>>(4096);
+        auto ring_buffer = std::make_shared<RingBuffer<TickerUpdate>>(65536);
 
         std::shared_ptr<net::io_context> ioc = std::make_shared<net::io_context>();
 
@@ -125,12 +125,6 @@ int main() {
 
         while (g_running) {
             if (ring_buffer->dequeue(update)) {
-                
-                // [디버깅] 초반 5개 데이터는 무조건 출력 (데이터 들어오는지 확인용)
-                if (processed_count < 5) {
-                    std::cout << "[Debug] Data received! Edge: " << update.edge_idx 
-                              << " Price: " << update.price << std::endl;
-                }
 
                 gm.UpdateWeight(update.edge_idx, update.price);
                 engine.DetectCycle(gm, sm, update.recv_time);
@@ -138,8 +132,18 @@ int main() {
                 processed_count++;
                 
                 // 10만 건은 너무 멂. 1,000건마다 점(.)을 찍어서 생존 신고
-                if (processed_count % 10000 == 0) {
-                     std::cout << "." << std::flush;
+                if (processed_count % 100000 == 0) {
+                    long q_size = ring_buffer->size();
+                    
+                    // [Diagnosis]
+                    // q_size가 0 또는 1에 수렴해야 정상 (엔진이 네트워크보다 빠름)
+                    // q_size가 계속 100, 1000 단위로 늘어나면 -> 엔진이 느림 (병목)
+                    
+                    std::cout << "[Stats] Latency Max: " << engine.max_latency << " us"
+                            << " | Queue Size: " << q_size 
+                            << " | Arbitrage found: " << engine.GetTotalDetection()
+                            << std::endl;
+                    
                 }
             } else {
                 _mm_pause(); 
