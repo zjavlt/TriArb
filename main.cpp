@@ -67,6 +67,7 @@ void NetworkThread(std::shared_ptr<net::io_context> ioc) {
 }
 int main() {
     std::signal(SIGINT, signal_handler);
+    long howmanySPFA = 0;
     try {
         std::cout << "Initializing..." << "\n";
         PinThreadToCore(4, "Engine(Main)");
@@ -119,11 +120,14 @@ int main() {
             }
             if (has_new_data) {
                 engine.DetectCycle(gm, sm, last_recv_time);
+                howmanySPFA++;
 
                 processed_count += processed_in_batch;
             } else {
                 _mm_pause();
             }
+
+            engine.ProcessCheck(gm);
         }
 
         
@@ -140,6 +144,7 @@ int main() {
         std::cout << " Total Updates Processed : " << processed_count << std::endl;
         std::cout << " Running Time            : " << seconds << " sec" << std::endl;
         std::cout << " Throughput              : " << (processed_count / seconds) << " ops/sec" << std::endl;
+        std::cout << " SPFAs                   : " << howmanySPFA << std::endl;
         std::cout << "==========================================" << std::endl;
         engine.PrintMinMaxLatency();
 

@@ -61,6 +61,9 @@ private:
     std::vector<PendingCheck> pending_queue; //later change to array or custom queue for optimization
     int pending_idx = 0;
     const long SIM_LATENCY = 50000; //microseconds
+
+    std::chrono::steady_clock::time_point last_schedule_time;
+    double last_scheduled_profit = 0.0;
 public:
     long max_latency = 0;
     long min_latency = 9999;
@@ -80,11 +83,11 @@ public:
         // std::memset(dist, GraphManager::INF_WEIGHT, sizeof(dist));
     }
 
-    void ScheduleCheck(NodeID detected_node, double profit) {
+    void ScheduleCheck(NodeID detected_node, const GraphManager& gm) {
+        // std::cout << "Schedule check " << std::endl;
         auto& item = pending_queue[pending_idx];
 
         item.detect_time = std::chrono::steady_clock::now();
-        item.expected_profit = profit;
         item.active = true;
 
         NodeID curr = detected_node;
@@ -92,10 +95,69 @@ public:
             curr = parent[curr];
         }
 
+        NodeID start = curr;
+        int idx = 0;
+
+        while (true) {
+            if (idx >= 10) break; //modify able
+
+            item.path[idx] = curr;
+            idx++;
+
+            curr = parent[curr];
+            if (curr == start && idx > 1) {
+                item.path[idx++] = curr;
+                break;
+            }
+        }
+
+        item.path_len = idx;
+
+        std::reverse(item.path, item.path + item.path_len);
+
+        double real_log_sum = 0.0;
+        bool path_valid = true;
+
+        for (int i = 0; i < item.path_len - 1; i++) {
+            NodeID u = item.path[i];
+            NodeID v = item.path[i+1];
+            
+            // GM에서 현재 가중치 조회
+            int64_t w = gm.GetWeight(u, v); 
+            if (w >= GraphManager::INF_WEIGHT) {
+                path_valid = false; 
+                break;
+            }
+            real_log_sum += w;
+        }
+        if (path_valid) {
+            // 여기서 단위 변환 (1e9)
+            // Sum은 음수여야 이득 (Log space)
+            double real_sum_dbl = (double)real_log_sum / 1000000000.0; 
+            item.expected_profit = std::exp(-real_sum_dbl) - 1.0; // 진짜 예상 수익
+        } else {
+            item.expected_profit = 0.0; // 경로 깨짐
+        }
+
+        // [Deduplication] 중복 제거 로직 (여기서 수행)
+        auto now = std::chrono::steady_clock::now();
+        auto diff = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_schedule_time).count();
+
+        // 500ms 내에 같은 수익률이면 스킵
+        if (diff < 500 && std::abs(item.expected_profit - last_scheduled_profit) < 0.00001) {
+            item.active = false; // 큐에 넣은 척만 하고 비활성
+            return; 
+        }
+
+        // 갱신
+        last_schedule_time = now;
+        last_scheduled_profit = item.expected_profit;
+
         pending_idx = (pending_idx + 1) & 127;
     }
 
     void ProcessCheck(const GraphManager& gm) {
+        // std::cout << "Process check" << std::endl;
         auto now = std::chrono::steady_clock::now();
 
         for (auto& item : pending_queue) {
@@ -110,7 +172,7 @@ public:
                     NodeID u = item.path[i];
                     NodeID v = item.path[i+1];
 
-                    double weight = gm.GetWeight(u, v);
+                    int64_t weight = gm.GetWeight(u, v);
 
                     if (weight >= GraphManager::INF_WEIGHT) {
                         valid = false;
@@ -120,10 +182,18 @@ public:
                 }
 
                 if (valid) {
-                    double current_profit = std::exp(-current_log_sum) - 1.0;
-                    // [Time] [Original] -> [After 50ms]
-                    std::cout << "[Verify] " << diff << "us later | Exp: " 
-                              << item.expected_profit * 100 << "% -> Act: " 
+                    double current_profit = std::exp(-((double)current_log_sum / GraphManager::SCALING_FACTOR)) - 1.0;
+
+                    std::cout << "[Cycle] ";
+                    
+                    for (int i = 0; i < item.path_len; i++) {
+
+                        std::cout << Config::COINS[item.path[i]];
+                        
+                        if (i < item.path_len - 1) std::cout << " -> ";
+                    }
+                    std::cout << " | Detected: " 
+                              << item.expected_profit * 100 << "% -> Actual: " 
                               << current_profit * 100 << "% ";
                     
                     if (current_profit > 0) std::cout << "SUCCESS (WIN)";
@@ -146,7 +216,7 @@ public:
         << "\n[Skipped] " << skipped << std::endl;
     }
 
-    void DetectCycle(GraphManager& gm, const SymbolMap& sm, std::chrono::steady_clock::time_point recv_time) {
+    void DetectCycle(GraphManager& gm, const SymbolMap& sm, std::chrono::steady_clock::time_point recv_time, NodeID source_node) {
         auto now = std::chrono::steady_clock::now();
         auto late = std::chrono::duration_cast<std::chrono::microseconds>(now - recv_time).count();
         if (late > STALE_THRESHOLD_US) {
@@ -157,23 +227,21 @@ public:
         for (int i = 0; i < MAX_NODES; ++i) {
             dist[i] = GraphManager::INF_WEIGHT;
         }
-        for (int i = 0; i < Config::NUM_COINS; i++) {
-            q.push(i);
-            in_queue[i] = true;
-            dist[i] = 0;
-        }
+        
+        dist[source_node]= 0;
+        q.push(source_node);
+        in_queue[source_node] = true;
+        
         long loop_count = 0;
         long relax_count = 0;
 
         while (!q.empty()) {
             NodeID u = q.pop();
             in_queue[u] = false;
-            loop_count++; // [Debug] 루프 횟수 체크
+            loop_count++;
 
-            // 여기서 gm.adj_size[u]가 0이면 그래프 연결이 안 된 것임
             int count = gm.adj_size[u];
             if (count == 0 && loop_count < 20) {
-                 // [Debug] 연결된 간선이 없음 (초반에만 출력)
                  std::cout << "[Debug] Node " << u << " has 0 edges!" << std::endl; 
             }
 
@@ -194,6 +262,7 @@ public:
                     // if (relax_count < 10) std::cout << "[Debug] Relax: " << u << "->" << v << " W:" << weight << std::endl;
 
                     if (update_cnt[v] > Config::NUM_COINS) {
+                        // std::cout << "detection test" << std::endl;
                         auto now = std::chrono::steady_clock::now();
                         auto latency = std::chrono::duration_cast<std::chrono::microseconds>(now - recv_time).count();
                         if (latency > max_latency) max_latency = latency;
@@ -201,12 +270,9 @@ public:
                         total_detection++;
 
                         if (dist[v] < -0.00001) {
-                            double profit = std::exp(-dist[v]) - 1.0;
-
-                            ScheduleCheck(v, profit);
-                            
+                            ScheduleCheck(v, gm);
+                            return;
                         }
-                        return;
                     }
 
                     if (!in_queue[v]) {
