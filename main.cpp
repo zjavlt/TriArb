@@ -1,5 +1,5 @@
-// 02-03: Got it to work with locality and core focus and FIFO scheduler. Now going to expand coin graph with python scraping. 
-// Current average delay : 40 microseconds
+// 02-04: Process SPFA by batches (100)
+// Current maximum latency: 79us
 
 #include "Common.hpp"
 #include "SymbolMap.hpp"
@@ -22,12 +22,10 @@
 #include <unistd.h>
 
 namespace net = boost::asio;
+constexpr int BATCH_SIZE = 1000;
 
-// [Global] 프로그램 실행 상태 플래그
-// 시그널 핸들러에서 접근해야 하므로 전역(혹은 정적)이어야 함
 std::atomic<bool> g_running{true};
 
-// [Handler] Ctrl+C가 눌리면 호출됨
 void signal_handler(int signum) {
     g_running = false;
 }
@@ -93,23 +91,6 @@ int main() {
 
         connector->run("stream.binance.us", "9443", "/ws");
 
-        // std::thread injector([&gm, &sm, ring_buffer](){
-        //     PinThreadToCore(6, "Injector"); // diff core
-        //     std::this_thread::sleep_for(std::chrono::seconds(5));
-        //     std::cout << "\n>>> [Test] Injecting FAKE for Latency Check! <<<\n" << std::endl;
-            
-        //     EdgePair edges = sm.GetEdgePair("DOGEUSDT");
-        //     if (edges.fwd != -1) {
-        //         TickerUpdate fake;
-        //         fake.edge_idx = edges.fwd;
-        //         fake.price = 100.0;
-        //         // 여기서 시간을 찍어서 보냄
-        //         fake.recv_time = std::chrono::steady_clock::now(); 
-        //         ring_buffer->enqueue(fake);
-        //     }
-        // });
-        // injector.detach();
-
         std::thread net_thread(NetworkThread, ioc);
 
         std::cout << ">>> Engine Started. Waiting for Market Data..." << std::endl;
@@ -124,31 +105,28 @@ int main() {
         auto start_time = std::chrono::steady_clock::now();
 
         while (g_running) {
-            if (ring_buffer->dequeue(update)) {
+            int processed_in_batch = 0;
 
+            std::chrono::steady_clock::time_point last_recv_time;
+            bool has_new_data = false;
+
+            while (processed_in_batch < BATCH_SIZE && ring_buffer->dequeue(update)) {
                 gm.UpdateWeight(update.edge_idx, update.price);
-                engine.DetectCycle(gm, sm, update.recv_time);
+                last_recv_time = update.recv_time;
+                has_new_data = true;
+                processed_in_batch++;
 
-                processed_count++;
-                
-                // 10만 건은 너무 멂. 1,000건마다 점(.)을 찍어서 생존 신고
-                if (processed_count % 100000 == 0) {
-                    long q_size = ring_buffer->size();
-                    
-                    // [Diagnosis]
-                    // q_size가 0 또는 1에 수렴해야 정상 (엔진이 네트워크보다 빠름)
-                    // q_size가 계속 100, 1000 단위로 늘어나면 -> 엔진이 느림 (병목)
-                    
-                    std::cout << "[Stats] Latency Max: " << engine.max_latency << " us"
-                            << " | Queue Size: " << q_size 
-                            << " | Arbitrage found: " << engine.GetTotalDetection()
-                            << std::endl;
-                    
-                }
+            }
+            if (has_new_data) {
+                engine.DetectCycle(gm, sm, last_recv_time);
+
+                processed_count += processed_in_batch;
             } else {
-                _mm_pause(); 
+                _mm_pause();
             }
         }
+
+        
 
         // -------------------------------------------------------
         // [Exit Stats] 종료 시 통계 출력

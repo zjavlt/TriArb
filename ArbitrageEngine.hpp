@@ -35,6 +35,14 @@ public:
     }
 };
 
+struct PendingCheck {
+    std::chrono::steady_clock::time_point detect_time;
+    double expected_profit;
+    NodeID path[10];
+    int path_len;
+    bool active;
+};
+
 class ArbitrageEngine {
 private:
     //buffer for SPFA
@@ -47,13 +55,22 @@ private:
     OrderExecutor executor;
     std::chrono::steady_clock::time_point last_detection_time;
     NodeID last_detected_node = -1;
-
+    static constexpr long STALE_THRESHOLD_US = 500;
+    
+    //sim
+    std::vector<PendingCheck> pending_queue; //later change to array or custom queue for optimization
+    int pending_idx = 0;
+    const long SIM_LATENCY = 50000; //microseconds
 public:
     long max_latency = 0;
     long min_latency = 9999;
+    long skipped = 0;
     
     ArbitrageEngine() {
         Reset();
+        q.clear();
+        pending_queue.resize(128);
+        for (auto& p: pending_queue) p.active = false;
     }
 
     void Reset() {
@@ -61,7 +78,62 @@ public:
         std::memset(in_queue, 0, sizeof(in_queue));
 
         // std::memset(dist, GraphManager::INF_WEIGHT, sizeof(dist));
-        q.clear();
+    }
+
+    void ScheduleCheck(NodeID detected_node, double profit) {
+        auto& item = pending_queue[pending_idx];
+
+        item.detect_time = std::chrono::steady_clock::now();
+        item.expected_profit = profit;
+        item.active = true;
+
+        NodeID curr = detected_node;
+        for (int i = 0; i < Config::NUM_COINS; i++) {
+            curr = parent[curr];
+        }
+
+        pending_idx = (pending_idx + 1) & 127;
+    }
+
+    void ProcessCheck(const GraphManager& gm) {
+        auto now = std::chrono::steady_clock::now();
+
+        for (auto& item : pending_queue) {
+            if (!item.active) continue;
+            auto diff = std::chrono::duration_cast<std::chrono::microseconds>(now - item.detect_time).count();
+
+            if (diff >= SIM_LATENCY) {
+                double current_log_sum = 0.0;
+                bool valid = true;
+
+                for (int i = 0;i < item.path_len - 1; i++) {
+                    NodeID u = item.path[i];
+                    NodeID v = item.path[i+1];
+
+                    double weight = gm.GetWeight(u, v);
+
+                    if (weight >= GraphManager::INF_WEIGHT) {
+                        valid = false;
+                        break;
+                    }
+                    current_log_sum += weight;
+                }
+
+                if (valid) {
+                    double current_profit = std::exp(-current_log_sum) - 1.0;
+                    // [Time] [Original] -> [After 50ms]
+                    std::cout << "[Verify] " << diff << "us later | Exp: " 
+                              << item.expected_profit * 100 << "% -> Act: " 
+                              << current_profit * 100 << "% ";
+                    
+                    if (current_profit > 0) std::cout << "SUCCESS (WIN)";
+                    else std::cout << "FAIL (DECAYED)";
+                    std::cout << std::endl;
+                }
+
+                item.active = false;
+            }
+        }
     }
 
     long GetTotalDetection() {
@@ -70,13 +142,17 @@ public:
 
     void PrintMinMaxLatency() {
         std::cout << "[Maximum Latency] " << max_latency << "us\n[Minimum Latency] " << min_latency 
-        << "us\n[Total Detections] " << total_detection << std::endl;
+        << "us\n[Total Detections] " << total_detection 
+        << "\n[Skipped] " << skipped << std::endl;
     }
 
-    // SPFA
-    // update_edge_idx -> later optimize to update only edges connected to the most recently updated node
-    // full scan for now
     void DetectCycle(GraphManager& gm, const SymbolMap& sm, std::chrono::steady_clock::time_point recv_time) {
+        auto now = std::chrono::steady_clock::now();
+        auto late = std::chrono::duration_cast<std::chrono::microseconds>(now - recv_time).count();
+        if (late > STALE_THRESHOLD_US) {
+            skipped++;
+            return;
+        }
         Reset();
         for (int i = 0; i < MAX_NODES; ++i) {
             dist[i] = GraphManager::INF_WEIGHT;
@@ -124,13 +200,12 @@ public:
                         if (latency < min_latency) min_latency = latency;
                         total_detection++;
 
-                        // auto time_diff = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_detection_time).count();
-                        // // std::cout << "[Perf] Cycle Detected! Internal Latency: " << latency << " us" << std::endl;
-                        // // if (v != last_detected_node || time_diff > 100) {
-                        // //     // ProcessArbitrage(v, gm, sm);
-                        // //     last_detection_time = now;
-                        // //     last_detected_node = v;
-                        // // }
+                        if (dist[v] < -0.00001) {
+                            double profit = std::exp(-dist[v]) - 1.0;
+
+                            ScheduleCheck(v, profit);
+                            
+                        }
                         return;
                     }
 

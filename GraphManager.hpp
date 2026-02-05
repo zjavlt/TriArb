@@ -22,20 +22,28 @@ public:
     //-999500; for testing//0 for no fee; //750281 -> -log(1 - 0.00075) * 1e9 //82503 -> -log(1 - 0.0000825) 
     static constexpr int64_t SCALING_FACTOR = 1000000000;
 
+    //gm
     void Init() {
         std::fill(std::begin(edge_weights), std::end(edge_weights), INF_WEIGHT);
         std::memset(adj_size, 0, sizeof(adj_size));
 
-        int edge_cnt = 0;
-        for (int u = 0; u < Config::NUM_COINS; u++) {
-            for (int v = 0; v < Config::NUM_COINS; v++) {
-                if (u == v) continue;
-                int idx = adj_size[u]++;
-                adj[u][idx] = {(NodeID)v, edge_cnt};
-                edge_cnt++;
+        for (const auto& edge : Config::VALID_EDGES) {
+             // 엣지 ID 계산 (u*N + v 등 규칙에 따름)
+             int edge_id = edge.u * MAX_NODES + edge.v; 
+             
+             adj[edge.u][adj_size[edge.u]] = { (NodeID)edge.v, edge_id };
+             adj_size[edge.u]++;
+        }
+    }
+
+    double GetWeight(NodeID u, NodeID v) const {
+        for (int i = 0; i < adj_size[u]; i++) {
+            if (adj[u][i].to == v) {
+                return edge_weights[adj[u][i].weight_idx];
             }
         }
-        std::cout << "[GraphManager] Initialized with " << edge_cnt << " edges." << std::endl;
+
+        return INF_WEIGHT;
     }
 
     inline void UpdateWeight(EdgeID id, double price) {
