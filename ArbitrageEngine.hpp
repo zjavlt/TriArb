@@ -43,6 +43,15 @@ struct PendingCheck {
     bool active;
 };
 
+struct TradeLog {
+    long latency_us;
+    double exp_profit;
+    double act_profit;
+    NodeID path[10];
+    int path_len;
+    bool success;
+};
+
 class ArbitrageEngine {
 private:
     //buffer for SPFA
@@ -64,6 +73,13 @@ private:
 
     std::chrono::steady_clock::time_point last_schedule_time;
     double last_scheduled_profit = 0.0;
+
+    //log
+    static constexpr int MAX_LOGS = 16384; //adjustable
+    TradeLog log_buffer[MAX_LOGS];
+    int log_head = 0;
+    int log_count = 0;
+
 public:
     long max_latency = 0;
     long min_latency = 9999;
@@ -184,25 +200,44 @@ public:
                 if (valid) {
                     double current_profit = std::exp(-((double)current_log_sum / GraphManager::SCALING_FACTOR)) - 1.0;
 
-                    std::cout << "[Cycle] ";
-                    
-                    for (int i = 0; i < item.path_len; i++) {
+                    TradeLog& log = log_buffer[log_head];
+                    log.latency_us = diff;
+                    log.exp_profit = item.expected_profit;
+                    log.act_profit = current_profit;
+                    log.path_len = item.path_len;
+                    std::memcpy(log.path, item.path, sizeof(NodeID) * item.path_len);
+                    log.success = (current_profit > 0);
 
-                        std::cout << Config::COINS[item.path[i]];
-                        
-                        if (i < item.path_len - 1) std::cout << " -> ";
-                    }
-                    std::cout << " | Detected: " 
-                              << item.expected_profit * 100 << "% -> Actual: " 
-                              << current_profit * 100 << "% ";
-                    
-                    if (current_profit > 0) std::cout << "SUCCESS (WIN)";
-                    else std::cout << "FAIL (DECAYED)";
-                    std::cout << std::endl;
+                    log_head = (log_head + 1) & (MAX_LOGS - 1);
+                    if (log_count < MAX_LOGS) log_count++;
                 }
 
                 item.active = false;
             }
+        }
+    }
+
+    void PrintLogs() {
+        std::cout << "\n>>> Trade History Dump (" << log_count << " entries) <<<" << std::endl;
+
+        int start_idx = (log_count < MAX_LOGS) ? 0 : log_head;
+
+        for (int i = 0; i < log_count; i++) {
+            int idx = (start_idx + i) & (MAX_LOGS - 1);
+            const TradeLog& log = log_buffer[idx];
+
+            std::cout << "[Cycle] ";
+            for (int k = 0; k < log.path_len; k++) {
+                std::cout << Config::COINS[log.path[k]];
+                if (k < log.path_len - 1) std::cout << " -> ";
+            }
+
+            std::cout << " | Exp: " << std::fixed << std::setprecision(5) << log.exp_profit * 100  << "%"
+                      << " -> Act: " << log.act_profit * 100 << "% ";
+            if (log.success) std::cout << "[WIN]";
+            else std::cout << "[Decayed]";
+
+            std::cout << " (" << log.latency_us << "us later)" << std::endl;
         }
     }
 

@@ -1,5 +1,4 @@
-// 02-04: Process SPFA by batches (100)
-// Current maximum latency: 79us
+// 02-05: Update recent profit per coin (could have to use nodes bc A->B->C->A != B -> C -> A -> B idk)
 
 #include "Common.hpp"
 #include "SymbolMap.hpp"
@@ -143,7 +142,9 @@ int main() {
         auto end_time = std::chrono::steady_clock::now();
         std::chrono::duration<double> diff = end_time - start_time;
         double seconds = diff.count();
-
+        engine.PrintLogs();
+        ioc->stop();
+        net_thread.join();
         std::cout << "\n\n>>> Shutdown Signal Received." << std::endl;
         std::cout << "==========================================" << std::endl;
         std::cout << " Total Updates Processed : " << processed_count << std::endl;
@@ -153,9 +154,7 @@ int main() {
         std::cout << "==========================================" << std::endl;
         engine.PrintMinMaxLatency();
 
-        // Cleanup
-        ioc->stop();
-        net_thread.join();
+        
 
     } catch (std::exception& e) {
         std::cerr << "[Critical Error] " << e.what() << std::endl;
