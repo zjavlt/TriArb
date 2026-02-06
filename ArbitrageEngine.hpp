@@ -41,6 +41,7 @@ struct PendingCheck {
     NodeID path[10];
     int path_len;
     bool active;
+    NodeID min_node;
 };
 
 struct TradeLog {
@@ -50,6 +51,15 @@ struct TradeLog {
     NodeID path[10];
     int path_len;
     bool success;
+
+    int repeat_count = 1;
+};
+
+struct alignas(32) NodeCache {
+    std::chrono::steady_clock::time_point last_time;
+    double last_profit;
+    bool was_decay;
+    
 };
 
 class ArbitrageEngine {
@@ -71,8 +81,7 @@ private:
     int pending_idx = 0;
     const long SIM_LATENCY = 50000; //microseconds
 
-    std::chrono::steady_clock::time_point last_schedule_time;
-    double last_scheduled_profit = 0.0;
+    NodeCache previousCache[MAX_NODES];
 
     //log
     static constexpr int MAX_LOGS = 16384; //adjustable
@@ -90,6 +99,7 @@ public:
         q.clear();
         pending_queue.resize(128);
         for (auto& p: pending_queue) p.active = false;
+        std::memset(previousCache, 0, sizeof(previousCache));
     }
 
     void Reset() {
@@ -155,19 +165,29 @@ public:
             item.expected_profit = 0.0; // 경로 깨짐
         }
 
+        NodeID min_node = 9999;
+        for (int i = 0; i < item.path_len; i++) {
+            if (item.path[i] < min_node) {
+                min_node = item.path[i];
+            }
+        }
+
+        long cooldown = previousCache[min_node].was_decay ? 1000 : 2;
+
         // [Deduplication] 중복 제거 로직 (여기서 수행)
         auto now = std::chrono::steady_clock::now();
-        auto diff = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_schedule_time).count();
+        auto diff = std::chrono::duration_cast<std::chrono::milliseconds>(now - previousCache[min_node].last_time).count();
 
         // 500ms 내에 같은 수익률이면 스킵
-        if (diff < 500 && std::abs(item.expected_profit - last_scheduled_profit) < 0.00001) {
+        if (diff < cooldown && std::abs(item.expected_profit - previousCache[min_node].last_profit) < 0.00001) {
             item.active = false; // 큐에 넣은 척만 하고 비활성
             return; 
         }
 
         // 갱신
-        last_schedule_time = now;
-        last_scheduled_profit = item.expected_profit;
+        previousCache[min_node].last_time = now;
+        previousCache[min_node].last_profit = item.expected_profit;
+        item.min_node = min_node;
 
         pending_idx = (pending_idx + 1) & 127;
     }
@@ -196,20 +216,41 @@ public:
                     }
                     current_log_sum += weight;
                 }
-
                 if (valid) {
+                    bool is_duplicate = false;
                     double current_profit = std::exp(-((double)current_log_sum / GraphManager::SCALING_FACTOR)) - 1.0;
 
-                    TradeLog& log = log_buffer[log_head];
-                    log.latency_us = diff;
-                    log.exp_profit = item.expected_profit;
-                    log.act_profit = current_profit;
-                    log.path_len = item.path_len;
-                    std::memcpy(log.path, item.path, sizeof(NodeID) * item.path_len);
-                    log.success = (current_profit > 0);
+                    if (log_count > 0) {
+                        int prev_idx = (log_head - 1 + MAX_LOGS) & (MAX_LOGS - 1);
+                        TradeLog prev_log = log_buffer[prev_idx];
 
-                    log_head = (log_head + 1) & (MAX_LOGS - 1);
-                    if (log_count < MAX_LOGS) log_count++;
+                        if (prev_log.path_len == item.path_len && prev_log.success == (current_profit > 0)) {
+                            if (std::memcmp(prev_log.path, item.path, sizeof(NodeID)* item.path_len) == 0) {
+                                prev_log.repeat_count++;
+
+                                prev_log.act_profit = current_profit;
+                                prev_log.latency_us = diff;
+
+                                is_duplicate = true;
+                            }
+                        }
+                    }
+                    if (!is_duplicate) {
+                        TradeLog& log = log_buffer[log_head];
+                        log.latency_us = diff;
+                        log.exp_profit = item.expected_profit;
+                        log.act_profit = current_profit;
+                        log.path_len = item.path_len;
+                        std::memcpy(log.path, item.path, sizeof(NodeID) * item.path_len);
+                        log.success = (current_profit > 0);
+                        previousCache[item.min_node].was_decay = !log.success;
+
+                        log_head = (log_head + 1) & (MAX_LOGS - 1);
+                        if (log_count < MAX_LOGS) log_count++;
+                    }
+                    
+                } else {
+                    previousCache[item.min_node].was_decay = true;
                 }
 
                 item.active = false;
@@ -218,8 +259,7 @@ public:
     }
 
     void PrintLogs() {
-        std::cout << "\n>>> Trade History Dump (" << log_count << " entries) <<<" << std::endl;
-
+        int wins = 0;
         int start_idx = (log_count < MAX_LOGS) ? 0 : log_head;
 
         for (int i = 0; i < log_count; i++) {
@@ -234,11 +274,21 @@ public:
 
             std::cout << " | Exp: " << std::fixed << std::setprecision(5) << log.exp_profit * 100  << "%"
                       << " -> Act: " << log.act_profit * 100 << "% ";
-            if (log.success) std::cout << "[WIN]";
+            if (log.success) {
+                std::cout << "[WIN]";
+                wins++;
+            }
             else std::cout << "[Decayed]";
+
+            if (log.repeat_count > 1) {
+                std::cout << " (x" << log.repeat_count << " bursts)";
+            }
 
             std::cout << " (" << log.latency_us << "us later)" << std::endl;
         }
+
+        std::cout << "\n>>> Trade History Dumped (" << log_count << " entries) <<<";
+        std::cout << "\n Win Rate: " << (double)wins / log_count * 100 << "%" <<std::endl;
     }
 
     long GetTotalDetection() {
