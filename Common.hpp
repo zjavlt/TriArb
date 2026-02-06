@@ -11,6 +11,7 @@ struct TickerUpdate {
     EdgeID edge_idx;
     double price; //int_64t later?
     std::chrono::steady_clock::time_point recv_time;
+    NodeID u;
 };
 
 struct Edge {

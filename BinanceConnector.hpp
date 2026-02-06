@@ -7,11 +7,11 @@
 #include <cctype>
 #include "Config.hpp"
 
+
 class BinanceConnector : public MarketDataConnector {
 private:
     simdjson::ondemand::parser parser_;
     simdjson::padded_string json_data_;
-
 public:
     BinanceConnector(net::io_context& ioc, ssl::context& ctx, std::shared_ptr<RingBuffer<TickerUpdate>> queue, const SymbolMap& sm) 
         : MarketDataConnector(ioc, ctx, queue, sm) {}
@@ -79,6 +79,8 @@ protected:
                 t.edge_idx = edges.fwd;
                 t.price = bid_price; // 이 가격에 팜
                 t.recv_time = now;
+                t.u = edges.fwd / MAX_NODES;
+                
                 queue_->enqueue(t);
             }
 
@@ -87,6 +89,7 @@ protected:
                 t.edge_idx = edges.bwd;
                 t.price = 1.0 / ask_price;
                 t.recv_time = now;
+                t.u = edges.bwd / MAX_NODES;
 
                 queue_->enqueue(t);
             }

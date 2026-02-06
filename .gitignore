@@ -10,3 +10,12 @@ build
 
 test_spfa.cpp
 
+DataRecorder.hpp
+
+CheckData.cpp
+
+market_data.bin
+
+bench
+
+Benchmark.cpp

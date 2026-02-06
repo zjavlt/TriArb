@@ -7,6 +7,7 @@
 #include "ArbitrageEngine.hpp"
 #include "RingBuffer.hpp"
 #include "BinanceConnector.hpp"
+#include "DataRecorder.hpp"
 
 #include <iostream>
 #include <thread>
@@ -103,7 +104,9 @@ int main() {
 
         TickerUpdate update;
         long processed_count = 0;
+        NodeID last_detected_node = 0;
         auto start_time = std::chrono::steady_clock::now();
+        DataRecorder recorder("market_data.bin");
 
         while (g_running) {
             int processed_in_batch = 0;
@@ -112,14 +115,16 @@ int main() {
             bool has_new_data = false;
 
             while (processed_in_batch < BATCH_SIZE && ring_buffer->dequeue(update)) {
+                recorder.Write(update);
                 gm.UpdateWeight(update.edge_idx, update.price);
                 last_recv_time = update.recv_time;
                 has_new_data = true;
+                last_detected_node = update.u;
                 processed_in_batch++;
 
             }
             if (has_new_data) {
-                engine.DetectCycle(gm, sm, last_recv_time);
+                engine.DetectCycle(gm, sm, last_recv_time, last_detected_node);
                 howmanySPFA++;
 
                 processed_count += processed_in_batch;
