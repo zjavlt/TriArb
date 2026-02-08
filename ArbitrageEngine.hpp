@@ -41,7 +41,6 @@ struct PendingCheck {
     NodeID path[10];
     int path_len;
     bool active;
-    NodeID min_node;
 };
 
 struct TradeLog {
@@ -166,10 +165,23 @@ public:
         }
 
         NodeID min_node = 9999;
+        int min_idx = 0;
         for (int i = 0; i < item.path_len; i++) {
             if (item.path[i] < min_node) {
                 min_node = item.path[i];
+                min_idx = i;
             }
+        }
+        if (min_idx > 0) {
+            NodeID temp[10];
+
+            std::memcpy(temp, item.path + min_idx, sizeof(NodeID) * (item.path_len - min_idx));
+
+            std::memcpy(temp + (item.path_len - min_idx), item.path, sizeof(NodeID) * min_idx);
+
+            std::memcpy(item.path, temp, sizeof(NodeID) * item.path_len);
+
+            item.path[item.path_len] = item.path[0];
         }
 
         long cooldown = previousCache[min_node].was_decay ? 1000 : 2;
@@ -187,7 +199,6 @@ public:
         // 갱신
         previousCache[min_node].last_time = now;
         previousCache[min_node].last_profit = item.expected_profit;
-        item.min_node = min_node;
 
         pending_idx = (pending_idx + 1) & 127;
     }
@@ -217,15 +228,17 @@ public:
                     current_log_sum += weight;
                 }
                 if (valid) {
+                    // std::cout << "Valid Point" << std::endl;
                     bool is_duplicate = false;
                     double current_profit = std::exp(-((double)current_log_sum / GraphManager::SCALING_FACTOR)) - 1.0;
 
                     if (log_count > 0) {
                         int prev_idx = (log_head - 1 + MAX_LOGS) & (MAX_LOGS - 1);
-                        TradeLog prev_log = log_buffer[prev_idx];
+                        TradeLog& prev_log = log_buffer[prev_idx];
 
                         if (prev_log.path_len == item.path_len && prev_log.success == (current_profit > 0)) {
                             if (std::memcmp(prev_log.path, item.path, sizeof(NodeID)* item.path_len) == 0) {
+                                // std::cout << "duplicate found" << std::endl;
                                 prev_log.repeat_count++;
 
                                 prev_log.act_profit = current_profit;
@@ -243,14 +256,14 @@ public:
                         log.path_len = item.path_len;
                         std::memcpy(log.path, item.path, sizeof(NodeID) * item.path_len);
                         log.success = (current_profit > 0);
-                        previousCache[item.min_node].was_decay = !log.success;
+                        previousCache[item.path[0]].was_decay = !log.success;
 
                         log_head = (log_head + 1) & (MAX_LOGS - 1);
                         if (log_count < MAX_LOGS) log_count++;
                     }
                     
                 } else {
-                    previousCache[item.min_node].was_decay = true;
+                    previousCache[item.path[0]].was_decay = true;
                 }
 
                 item.active = false;
@@ -261,6 +274,7 @@ public:
     void PrintLogs() {
         int wins = 0;
         int start_idx = (log_count < MAX_LOGS) ? 0 : log_head;
+        int bursts = 0;
 
         for (int i = 0; i < log_count; i++) {
             int idx = (start_idx + i) & (MAX_LOGS - 1);
@@ -276,19 +290,21 @@ public:
                       << " -> Act: " << log.act_profit * 100 << "% ";
             if (log.success) {
                 std::cout << "[WIN]";
-                wins++;
+                wins += log.repeat_count;
             }
             else std::cout << "[Decayed]";
 
             if (log.repeat_count > 1) {
                 std::cout << " (x" << log.repeat_count << " bursts)";
             }
+            bursts += log.repeat_count;
 
             std::cout << " (" << log.latency_us << "us later)" << std::endl;
         }
 
         std::cout << "\n>>> Trade History Dumped (" << log_count << " entries) <<<";
-        std::cout << "\n Win Rate: " << (double)wins / log_count * 100 << "%" <<std::endl;
+        std::cout << "\n Win Rate: " << (double)wins / bursts * 100 << "%" <<std::endl;
+        std::cout << "\n Total " << bursts << " Burst Executions" << std::endl;
     }
 
     long GetTotalDetection() {
@@ -355,7 +371,7 @@ public:
                         total_detection++;
 
                         if (dist[v] < -0.00001) {
-                            ScheduleCheck(v, gm);
+                            // ScheduleCheck(v, gm);
                             return;
                         }
                     }
