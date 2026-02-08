@@ -147,7 +147,6 @@ public:
             NodeID u = item.path[i];
             NodeID v = item.path[i+1];
             
-            // GM에서 현재 가중치 조회
             int64_t w = gm.GetWeight(u, v); 
             if (w >= GraphManager::INF_WEIGHT) {
                 path_valid = false; 
@@ -156,8 +155,6 @@ public:
             real_log_sum += w;
         }
         if (path_valid) {
-            // 여기서 단위 변환 (1e9)
-            // Sum은 음수여야 이득 (Log space)
             double real_sum_dbl = (double)real_log_sum / 1000000000.0; 
             item.expected_profit = std::exp(-real_sum_dbl) - 1.0; // 진짜 예상 수익
         } else {
@@ -186,17 +183,14 @@ public:
 
         long cooldown = previousCache[min_node].was_decay ? 1000 : 2;
 
-        // [Deduplication] 중복 제거 로직 (여기서 수행)
         auto now = std::chrono::steady_clock::now();
         auto diff = std::chrono::duration_cast<std::chrono::milliseconds>(now - previousCache[min_node].last_time).count();
 
-        // 500ms 내에 같은 수익률이면 스킵
         if (diff < cooldown && std::abs(item.expected_profit - previousCache[min_node].last_profit) < 0.00001) {
-            item.active = false; // 큐에 넣은 척만 하고 비활성
+            item.active = false; 
             return; 
         }
 
-        // 갱신
         previousCache[min_node].last_time = now;
         previousCache[min_node].last_profit = item.expected_profit;
 
@@ -371,7 +365,7 @@ public:
                         total_detection++;
 
                         if (dist[v] < -0.00001) {
-                            // ScheduleCheck(v, gm);
+                            ScheduleCheck(v, gm);
                             return;
                         }
                     }

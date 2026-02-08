@@ -24,45 +24,45 @@
 
 namespace net = boost::asio;
 constexpr int BATCH_SIZE = 1000;
-constexpr int BIT_SHIFT = 7;
-constexpr int MAX_BUCKET = 1000000;
-static long long latency_histogram[MAX_BUCKET];
-static long long total_ns = 0;
+// constexpr int BIT_SHIFT = 7;
+// constexpr int MAX_BUCKET = 1000000;
+// static long long latency_histogram[MAX_BUCKET];
+// static long long total_ns = 0;
 static long long count = 0;
-static long long outliers = 0;
+// static long long outliers = 0;
 
 std::atomic<bool> g_running{true};
 
 void printStats(int signum) {
     g_running = false;
-    std::cout << "\n\n >>> 10-Hour Live Benchmark Results <<<" << std::endl;
+    // std::cout << "\n\n >>> 10-Hour Live Benchmark Results <<<" << std::endl;
 
-    if (count == 0) { std::cout << "No Data. " << std::endl; exit(0);}
+    // if (count == 0) { std::cout << "No Data. " << std::endl; exit(0);}
 
-    double avg_ns = (double)total_ns / count;
+    // double avg_ns = (double)total_ns / count;
 
-    long long sum = 0;
-    long long p50_idx = 0, p99_idx = 0, p999_idx = 0;
-    long long target_50 = count * 0.50;
-    long long target_99 = count * 0.99;
-    long long target_999 = count * 0.999;
+    // long long sum = 0;
+    // long long p50_idx = 0, p99_idx = 0, p999_idx = 0;
+    // long long target_50 = count * 0.50;
+    // long long target_99 = count * 0.99;
+    // long long target_999 = count * 0.999;
 
-    for (int i = 0; i < 1000000; i++) {
-        sum += latency_histogram[i];
-        if (p50_idx == 0 && sum >= target_50) p50_idx = i;
-        if (p99_idx == 0 && sum >= target_99) p99_idx = i;
-        if (p999_idx == 0 && sum >= target_999) {
-            p999_idx = i;
-            break;
-        }
-    }
+    // for (int i = 0; i < 1000000; i++) {
+    //     sum += latency_histogram[i];
+    //     if (p50_idx == 0 && sum >= target_50) p50_idx = i;
+    //     if (p99_idx == 0 && sum >= target_99) p99_idx = i;
+    //     if (p999_idx == 0 && sum >= target_999) {
+    //         p999_idx = i;
+    //         break;
+    //     }
+    // }
 
-    std::cout << "Total Updates : " << count << std::endl;
-    std::cout << "Average Latency: " << std::fixed << std::setprecision(3) << avg_ns / 1000.0 << " us" << std::endl;
-    std::cout << "p50 (Median)   : " << p50_idx / 10.0 << " us" << std::endl; // 100ns 단위라 /10 하면 us
-    std::cout << "p99            : " << p99_idx / 10.0 << " us" << std::endl;
-    std::cout << "p99.9          : " << p999_idx / 10.0 << " us" << std::endl;
-    std::cout << "Outliers (>100ms): " << outliers << std::endl;
+    // std::cout << "Total Updates : " << count << std::endl;
+    // std::cout << "Average Latency: " << std::fixed << std::setprecision(3) << avg_ns / 1000.0 << " us" << std::endl;
+    // std::cout << "p50 (Median)   : " << p50_idx / 10.0 << " us" << std::endl; // 100ns 단위라 /10 하면 us
+    // std::cout << "p99            : " << p99_idx / 10.0 << " us" << std::endl;
+    // std::cout << "p99.9          : " << p999_idx / 10.0 << " us" << std::endl;
+    // std::cout << "Outliers (>100ms): " << outliers << std::endl;
 
 }
 
@@ -106,9 +106,9 @@ int main() {
     long howmanySPFA = 0;
     try {
         std::cout << "Initializing..." << "\n";
-        PinThreadToCore(4, "Engine(Main)");
+        PinThreadToCore(4, "Engine(Main)"); //unsure if WSL2 is actually doing this or pretending
         SetRealtimePriority();
-        // 1. 초기화
+
         SymbolMap sm;
         sm.Init();
 
@@ -140,7 +140,7 @@ int main() {
         TickerUpdate update;
         NodeID last_detected_node = 0;
         auto start_time = std::chrono::steady_clock::now();
-        // DataRecorder recorder("market_data.bin");
+        // DataRecorder recorder("market_data.bin"); <- for gathering historical market data
 
         while (g_running) {
 
@@ -153,7 +153,7 @@ int main() {
             std::memset(dirty_nodes, 0, sizeof(dirty_nodes));
 
             while (processed_in_batch < BATCH_SIZE && ring_buffer->dequeue(update)) {
-                // recorder.Write(update);
+                // recorder.Write(update); <- for gathering historical market data
                 gm.UpdateWeight(update.edge_idx, update.price);
                 dirty_nodes[update.u] = true;
                 has_new_data = true;
@@ -169,26 +169,26 @@ int main() {
                 if (dirty_nodes[i]) {
                     engine.DetectCycle(gm, sm, now, i);
                     howmanySPFA++;
+                    engine.ProcessCheck(gm);
                 }
             }
 
-            // engine.ProcessCheck(gm);
 
-            auto batch_end = std::chrono::steady_clock::now();
-            long ns = std::chrono::duration_cast<std::chrono::nanoseconds>(batch_end - batch_start).count();
+            // auto batch_end = std::chrono::steady_clock::now();
+            // long ns = std::chrono::duration_cast<std::chrono::nanoseconds>(batch_end - batch_start).count();
 
             if (processed_in_batch > 0) {
-                long ns_per_op = ns / processed_in_batch;
+                // long ns_per_op = ns / processed_in_batch;
 
-                total_ns += ns;
+                // total_ns += ns;
                 count += processed_in_batch;
 
-                int bucket = ns_per_op >> 7; // /128
-                if (bucket < 1000000) {
-                    latency_histogram[bucket] += processed_in_batch;
-                } else {
-                    outliers += processed_in_batch;
-                }
+                // int bucket = ns_per_op >> 7; // /128
+                // if (bucket < 1000000) {
+                //     latency_histogram[bucket] += processed_in_batch;
+                // } else {
+                //     outliers += processed_in_batch;
+                // }
             }
         }
 
@@ -197,7 +197,7 @@ int main() {
         std::cout << std::endl;
         std::chrono::duration<double> diff = end_time - start_time;
         double seconds = diff.count();
-        // engine.PrintLogs();
+        engine.PrintLogs();
         ioc->stop();
         net_thread.join();
         std::cout << "\n\n>>> Shutdown Signal Received." << std::endl;
