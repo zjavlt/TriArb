@@ -1,6 +1,5 @@
 import requests
 
-# 설정: 상위 몇 개 코인을 뽑을 것인가?
 TOP_N = 30 
 
 def get_top_coins():
@@ -18,7 +17,6 @@ def get_top_coins():
     unique_coins = []
     seen = set()
     
-    # 기축통화 먼저 확보
     bases = ['USDT', 'USD', 'BTC', 'ETH', 'BNB'] 
     for b in bases:
         if b not in seen:
@@ -37,21 +35,15 @@ def get_top_coins():
     return unique_coins
 
 def generate_cpp_header(coins):
-    # 구독할 페어 조합 생성 (Whitelist)
     quotes = ['USD', 'USDT', 'BTC', 'ETH', 'BNB']
     pairs = []
     
     for coin in coins:
         for q in quotes:
             if coin == q: continue
-            # 소문자로 생성
             s1 = f"{coin.lower()}{q.lower()}"
-            # s2는 생략 (Binance API 규칙상 한 방향만 존재할 확률 높음, 필요시 추가)
             if s1 not in pairs: pairs.append(s1)
-
-    # ---------------------------------------------------------
-    # [FIX 1] 코인 이름 -> 인덱스 매핑 (검색을 위해 키를 '소문자'로 저장)
-    # ---------------------------------------------------------
+                
     coin_to_idx = { c.lower(): i for i, c in enumerate(coins) }
 
     code = f"""#pragma once
@@ -67,7 +59,6 @@ namespace Config {{
     constexpr std::array<std::string_view, NUM_COINS> COINS = {{
 """
     
-    # 코인 리스트 출력
     line = "        "
     for i, c in enumerate(coins):
         line += f'"{c}", '
@@ -76,7 +67,6 @@ namespace Config {{
             line = ""
     code += line.rstrip(", ") + "\n    };\n\n"
 
-    # 페어 리스트 출력
     code += f"""    // 2. Subscription Targets (Edges)
     constexpr int NUM_PAIRS = {len(pairs)};
     constexpr std::array<std::string_view, NUM_PAIRS> TARGET_PAIRS = {{
@@ -90,9 +80,6 @@ namespace Config {{
             line = ""
     code += line.rstrip(", ") + "\n    };\n"
 
-    # ---------------------------------------------------------
-    # [FIX 2] Valid Edges 파싱 로직 개선
-    # ---------------------------------------------------------
     code += """
     // 3. Valid Edges (From -> To indices)
     struct EdgeDef { int u; int v; };
@@ -101,7 +88,6 @@ namespace Config {{
 """
 
     count = 0
-    # 길이가 긴 코인부터 매칭 (예: USDT가 USD보다 먼저 매칭되게)
     sorted_coins = sorted(coins, key=len, reverse=True)
     
     valid_pair_count = 0
@@ -110,22 +96,19 @@ namespace Config {{
         u_idx = -1
         v_idx = -1
         
-        # pair는 이미 소문자임 (위에서 생성할 때 lower() 했음)
         for coin in sorted_coins:
-            coin_lower = coin.lower() # 비교를 위해 소문자로 변환
+            coin_lower = coin.lower() 
             
             if pair.startswith(coin_lower):
                 base_coin = coin_lower
-                quote_coin = pair[len(base_coin):] # 남은 뒷부분
+                quote_coin = pair[len(base_coin):]
                 
-                # 남은 뒷부분도 유효한 코인인지 확인
                 if quote_coin in coin_to_idx:
                     u_idx = coin_to_idx[base_coin]
                     v_idx = coin_to_idx[quote_coin]
-                    break # 매칭 성공하면 탈출
+                    break 
         
         if u_idx != -1 and v_idx != -1:
-            # 정방향 & 역방향 추가
             code += f"        {{ {u_idx}, {v_idx} }}, {{ {v_idx}, {u_idx} }}, \n"
             count += 2
             valid_pair_count += 1
@@ -135,9 +118,6 @@ namespace Config {{
     code += "    }};\n"
     code += "}\n"
 
-    # ---------------------------------------------------------
-    # [FIX 3] 파일 저장 시 UTF-8 인코딩 명시 (한글 주석 해결)
-    # ---------------------------------------------------------
     with open("Config.hpp", "w", encoding="utf-8") as f:
         f.write(code)
     
